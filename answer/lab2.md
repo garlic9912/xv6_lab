@@ -1,5 +1,7 @@
 # System call tracing（moderate）
 
+- **题目要求**
+
 实验要求编写trace函数系统调用，实现如下功能
 
 ```
@@ -28,11 +30,9 @@ $ trace 2147483647 grep hello README
 
 
 
-**根据提示解题**
+- **解题过程**
 
 - 将 `$U/_trace` 添加到 Makefile文件 的 `UPROGS` 字段中
-
-
 
 
 
@@ -54,8 +54,6 @@ exec(nargv[0], nargv);
 
 
 
-
-
 - 系统调用trace并未声明，为了启动`qemu`需要声明trace系统调用
 
   - 在 `user/user.h` 文件中加入函数声明：`int trace(int);`
@@ -63,8 +61,6 @@ exec(nargv[0], nargv);
   - 同时，为了生成进入中断的汇编文件，需要在 `user/usys.pl` 添加进入内核态的入口函数的声明：`entry("trace");`，以便使用 `ecall` 中断指令进入内核态
 
   - 同时在 `kernel/syscall.h` 中添加系统调用编号，编号顺延即可
-
-
 
 
 
@@ -94,8 +90,6 @@ sys_trace(void)
 
 
 
-
-
 - 改写`fork()`函数以跟踪子进程
 
 ```c++
@@ -107,10 +101,6 @@ fork(void)
   np->mask = p->mask;
 }
 ```
-
-
-
-
 
 
 
