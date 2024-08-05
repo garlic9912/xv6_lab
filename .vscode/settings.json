@@ -1,0 +1,20 @@
+{
+    "files.associations": {
+        "user.h": "c",
+        "complex": "c",
+        "system_error": "c",
+        "typeinfo": "c",
+        "random": "c",
+        "defs.h": "c",
+        "types.h": "c",
+        "memlayout.h": "c",
+        "param.h": "c",
+        "spinlock.h": "c",
+        "riscv.h": "c",
+        "limits": "c",
+        "numeric": "c",
+        "iostream": "c",
+        "istream": "c",
+        "ostream": "c"
+    }
+}

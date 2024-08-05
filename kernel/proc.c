@@ -291,6 +291,9 @@ fork(void)
 
   safestrcpy(np->name, p->name, sizeof(p->name));
 
+  // 传递trace的参数
+  np->mask = p->mask;
+
   pid = np->pid;
 
   np->state = RUNNABLE;
@@ -692,4 +695,19 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+
+
+// 获取state不为UNUSED的进程数
+uint64
+get_proc(void) {
+  uint64 n = 0;
+  struct proc *p;
+  for (p = proc; p < &proc[NPROC]; p++) {
+    if (p->state != UNUSED) {
+      n++;
+    }
+  }
+  return n;
 }

@@ -87,6 +87,7 @@ fileclose(struct file *f)
 int
 filestat(struct file *f, uint64 addr)
 {
+  // 获得当前正在运行进程的指针
   struct proc *p = myproc();
   struct stat st;
   

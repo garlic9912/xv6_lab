@@ -5,6 +5,7 @@
 #include "param.h"
 #include "memlayout.h"
 #include "spinlock.h"
+#include "sysinfo.h"
 #include "proc.h"
 
 uint64
@@ -94,4 +95,44 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+
+
+// 跟踪系统调用，返回pid和函数返回值
+// $ trace 32 grep hello README
+// 3: syscall read -> 1023
+uint64
+sys_trace(void)
+{
+  int n;
+  // 获取系统调用的参数
+  if(argint(0, &n) < 0)
+    return -1;
+  myproc()->mask = n;
+  return 0;
+}
+
+
+
+uint64
+sys_sysinfo(void) {
+  struct proc *p = myproc();
+  struct sysinfo info;
+  uint64 addr;
+  
+  // 获取数据
+  info.freemem = get_freemem();
+  info.nproc = get_proc();
+
+  // 系统调用第n=0个参数的用户空间地址
+  if (argaddr(0, &addr) < 0) return -1;
+
+  // p->pagetable：当前进程的页表
+  // addr：用户空间目的地址
+  // (char *)&info：内核空间的源地址
+  // sizeof(info)：复制的长度
+  if (copyout(p->pagetable, addr, (char *)&info, sizeof(info)) < 0)
+    return -1;
+  return 0;
 }
