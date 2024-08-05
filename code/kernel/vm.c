@@ -1,3 +1,5 @@
+// 代码实现了一个内核页表管理系统，主要功能包括页表的初始化、映射、地址转换、页表清理等操作
+
 #include "param.h"
 #include "types.h"
 #include "memlayout.h"
@@ -24,6 +26,12 @@ kvminit()
   kernel_pagetable = (pagetable_t) kalloc();
   memset(kernel_pagetable, 0, PGSIZE);
 
+  /*
+  使用 kvmmap() 函数将一系列重要的物理地址
+  （如 UART0, VirtIO, CLINT, PLIC）
+  映射到内核页表中
+  */
+
   // uart registers
   kvmmap(UART0, UART0, PGSIZE, PTE_R | PTE_W);
 
@@ -42,19 +50,36 @@ kvminit()
   // map kernel data and the physical RAM we'll make use of.
   kvmmap((uint64)etext, (uint64)etext, PHYSTOP-(uint64)etext, PTE_R | PTE_W);
 
+
   // map the trampoline for trap entry/exit to
   // the highest virtual address in the kernel.
+
+  // 最后，将跳板代码（trampoline）映射到内核的最高虚拟地址
   kvmmap(TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
 }
 
+
+
+
+
+
+
 // Switch h/w page table register to the kernel's page table,
 // and enable paging.
+
+// 设置硬件的页表寄存器指向内核的页表，并启用分页
 void
 kvminithart()
 {
   w_satp(MAKE_SATP(kernel_pagetable));
   sfence_vma();
 }
+
+
+
+
+
+
 
 // Return the address of the PTE in page table pagetable
 // that corresponds to virtual address va.  If alloc!=0,
@@ -271,12 +296,16 @@ uvmdealloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
 
 // Recursively free page-table pages.
 // All leaf mappings must already have been removed.
+// 释放所有的非叶子结点的页表项（PTE）
 void
 freewalk(pagetable_t pagetable)
 {
   // there are 2^9 = 512 PTEs in a page table.
   for(int i = 0; i < 512; i++){
     pte_t pte = pagetable[i];
+
+    // 检查 PTE 是否有效（即 PTE_V 位被设置）
+    // 如果 PTE 有效，但它既不是可读、可写，也不是可执行的（即非叶子节点），那么它指向下一级页表。
     if((pte & PTE_V) && (pte & (PTE_R|PTE_W|PTE_X)) == 0){
       // this PTE points to a lower-level page table.
       uint64 child = PTE2PA(pte);
@@ -439,4 +468,39 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+void _vmprint(pagetable_t pt, int deep) {
+  for (int i = 0; i < 512; i++) {
+    // 页表中的每个pte
+    pte_t pte = pt[i];
+    // 有效的pte
+    if (pte && PTE_V) {
+      // 打印深度
+      for (int j = 1; j <= deep; j++) {
+        printf("..");
+        if (j != deep) printf(" ");
+      }
+      // 非叶子结点(前两级页表)
+      if((pte & (PTE_R|PTE_W|PTE_X)) == 0){
+        // 打印信息
+        pagetable_t pa = (pagetable_t)PTE2PA(pte);
+        printf("%d: pte %p pa %p\n", i, pte, pa);
+        // 递归
+        _vmprint(pa, deep+1);
+        // 叶子结点(最后的页表)  
+      } else {
+        // 打印信息
+        pagetable_t pa = (pagetable_t)PTE2PA(pte);
+        printf("%d: pte %p pa %p\n", i, pte, pa);
+      }
+    }
+  }
+}
+
+void 
+vmprint(pagetable_t pt) {
+  // 打印参数
+  printf("page table %p\n", pt);
+  _vmprint(pt, 1);
 }
