@@ -128,3 +128,286 @@ vmprint(pagetable_t pt) {
 
 - 因为题目要求要打印`vmprint`的参数，为了解决递归过程多次打印参数的问题，需要一个辅助函数来进行递归
 - 辅助函数采用了原函数加下划线。下划线表示这个函数是内部使用的，它不应该被外部代码直接调用，而是由模块或库的内部实现使用。这是一种约定，用来提醒开发者不要在模块或类外部直接调用这些函数
+
+
+
+
+
+
+
+
+
+
+
+# 2.A kernel page table per process (难度：hard)
+
+- **题目要求**
+
+>你的第一项工作是修改内核来让每一个进程在内核中执行时使用它自己的内核页表的副本。修改`struct proc`来为每一个进程维护一个内核页表，修改调度程序使得切换进程时也切换内核页表。对于这个步骤，每个进程的内核页表都应当与现有的的全局内核页表完全一致。如果你的`usertests`程序正确运行了，那么你就通过了这个实验。
+
+
+
+
+
+- **解题步骤**
+
+我们根据提示一步一步来
+
+- 在`struct proc`中为进程的内核页表增加一个字段
+
+```c++
+struct proc {
+  struct spinlock lock;
+  // ...
+  pagetable_t pagetable;       // User page table
+  pagetable_t kernel_pt;       // 进程的内核页表
+  // ...
+};
+```
+
+进程拥有内核区和用户区，第一个`pagetable`页表是用户区使用的，而新加入的`kernel_pt`是进程内核区的页表
+
+
+
+- 一个新进程生成一个内核页表的合理方案是实现一个修改版的`kvminit`，这个版本中应当创造一个新的页表而不是修改`kernel_pagetable`。你将会考虑在`allocproc`中调用这个函数
+
+提示中让我们修改`kvminit`，我们先观察这个函数
+
+```c++
+void
+kvminit()
+{
+  // 内核页表通过 kalloc() 分配
+  kernel_pagetable = (pagetable_t) kalloc();
+  memset(kernel_pagetable, 0, PGSIZE);
+
+  // 使用 kvmmap() 函数将一系列重要的物理地址（如 UART0, VirtIO, CLINT, PLIC）映射到内核页表中
+  kvmmap(UART0, UART0, PGSIZE, PTE_R | PTE_W);
+	// ...
+  kvmmap(TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
+}
+
+
+// 在内核页表中添加一段虚拟地址到物理地址的映射,添加一个有意义的页表项
+void
+kvmmap(uint64 va, uint64 pa, uint64 sz, int perm)
+{
+  if(mappages(kernel_pagetable, va, sz, pa, perm) != 0)
+    panic("kvmmap");
+}
+```
+
+`kvminit()`中先为总的内核页表分配内存空间，之后借助`kvmmap()`函数将一些必要的设备和程序代码添加到页表中
+
+由于题目说每个进程的内核页表都应当与现有的的全局内核页表完全一致，所以改写时总的内核页表中初始化的过程我们也要初始化。之后在`allocproc`中调用即可
+
+代码如下：
+
+```c++
+// kernel/vm.c
+// == 进程内核页表用于映射的辅助函数 ==
+void
+proc_kvmmap(pagetable_t pt, uint64 va, uint64 pa, uint64 sz, int perm)
+{
+  if(mappages(pt, va, sz, pa, perm) != 0)
+    panic("proc_kvmmap");
+}
+
+
+// == 进程的内核页表初始化 ==
+pagetable_t
+proc_kernel_pt(void){
+  pagetable_t pagetable;
+  // 创建空页表
+  pagetable = uvmcreate();
+  if(pagetable == 0)
+    return 0;
+
+  // 映射
+  proc_kvmmap(pagetable, UART0, UART0, PGSIZE, PTE_R | PTE_W);
+  proc_kvmmap(pagetable, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
+  proc_kvmmap(pagetable, CLINT, CLINT, 0x10000, PTE_R | PTE_W);
+  proc_kvmmap(pagetable, PLIC, PLIC, 0x400000, PTE_R | PTE_W);
+  proc_kvmmap(pagetable, KERNBASE, KERNBASE, (uint64)etext-KERNBASE, PTE_R | PTE_X);
+  proc_kvmmap(pagetable, (uint64)etext, (uint64)etext, PHYSTOP-(uint64)etext, PTE_R | PTE_W);
+  proc_kvmmap(pagetable, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);  
+
+  return pagetable;
+}
+```
+
+```c++
+// kernel/proc.c -- allocproc()
+// An empty user page table.
+p->pagetable = proc_pagetable(p);
+if(p->pagetable == 0){
+  freeproc(p);
+  release(&p->lock);
+  return 0;
+}
+
+// 初始化内核页表
+p->kernel_pt = proc_kernel_pt();
+if(p->kernel_pt == 0){
+  freeproc(p);
+  release(&p->lock);
+  return 0;
+}  
+```
+
+
+
+
+
+
+
+- 确保每一个进程的内核页表都关于该进程的内核栈有一个映射。在未修改的XV6中，所有的内核栈都在`procinit`中设置。你将要把这个功能部分或全部的迁移到`allocproc`中
+
+阅读`procinit`的代码，将内核栈映射的代码剪切至进程内核页表初始化的代码后
+
+```c++
+// allocproc()
+// 初始化内核页表
+p->kernel_pt = proc_kernel_pt();
+if(p->kernel_pt == 0){
+  freeproc(p);
+  release(&p->lock);
+  return 0;
+}  
+
+
+// 内核栈映射
+char *pa = kalloc();
+if(pa == 0)
+  panic("kalloc");
+// 每个进程在虚拟内存空间中都有一个独立的内核栈区域，KSTACK 根据进程索引计算出这个区域的起始地址
+uint64 va = KSTACK((int) (p - proc));
+proc_kvmmap(p->kernel_pt, va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
+p->kstack = va;
+```
+
+
+
+
+
+
+
+- 修改`scheduler()`来加载进程的内核页表到核心的`satp`寄存器(参阅`kvminithart`来获取启发)。不要忘记在调用完`w_satp()`后调用`sfence_vma()`
+
+我们先参阅一下`kvminithart`函数
+
+```c++
+// 设置硬件的页表寄存器satp指向内核的页表
+// 通过 sfence_vma() 刷新页表缓存，启用分页机制
+void
+kvminithart()
+{
+  w_satp(MAKE_SATP(kernel_pagetable));
+  sfence_vma();
+}
+```
+
+这个函数是专门用于全局变量的总内核页表的，我们仿写一个专门加载进程内核页表的函数
+
+```c++
+void
+proc_kvminithart(pagetable_t pt)
+{
+  w_satp(MAKE_SATP(pt));
+  sfence_vma();
+}
+```
+
+代码如下
+
+```c++
+// kernel/proc.c
+for(p = proc; p < &proc[NPROC]; p++) {
+   acquire(&p->lock);
+   if(p->state == RUNNABLE) {
+   // Switch to chosen process.  It is the process's job
+   // to release its lock and then reacquire it
+   // before jumping back to us.
+   p->state = RUNNING;
+   c->proc = p;
+   // 加载进程内核页表到satp寄存器
+   proc_kvminithart(p->kernel_pt);
+   // 执行上下文切换，将 CPU 的控制权交给进程
+   swtch(&c->context, &p->context);
+
+   // 进程运行完后，将当前 CPU 的 proc 置为 0，表示当前没有进程在运行
+   c->proc = 0;
+   // 切换回内核态页表
+   kvminithart();
+
+   found = 1;
+}
+```
+
+只要在`swtch(&c->context, &p->context);`前面将进程的内核页表加载入stap，在之后切换为总内核页表即可
+
+
+
+- 在`freeproc`中释放一个进程的内核页表
+
+```c++
+// kernel/proc.c
+freeproc(struct proc *p)
+{
+  if(p->trapframe)
+    kfree((void*)p->trapframe);
+  p->trapframe = 0;
+  if(p->pagetable)
+    proc_freepagetable(p->pagetable, p->sz);
+  p->pagetable = 0;
+  p->sz = 0;
+  p->pid = 0;
+  p->parent = 0;
+  p->name[0] = 0;
+  p->chan = 0;
+  p->killed = 0;
+  p->xstate = 0;
+  p->state = UNUSED;
+  // 释放进程的内核栈
+  uvmunmap(p->kernel_pt, p->kstack, 1, 1);
+  p->kstack = 0;
+  // 释放进程的内核页表
+  proc_freewalk(p->kernel_pt);
+}
+```
+
+这个函数用于释放进程，除了释放进程的内核页表，需要注意的是：进程在运行内核代码时，会使用他的内核栈空间，也就是说这个内核栈空间是这个进程独有的，在进程被释放时应该一并释放对应的内核栈。
+
+所以在代码中先借助进程的内核页表将内核栈空间释放，再释放页表，这里需要我们单独写一个释放函数，类似`freewalk`函数
+
+```c++
+// kernel/vm.c
+// == 释放进程的内核页表 ==
+void
+proc_freewalk(pagetable_t pagetable)
+{
+  for(int i = 0; i < 512; i++){
+    pte_t pte = pagetable[i];
+    if (pte & PTE_V) {
+      pagetable[i] = 0;
+      if ((pte & (PTE_R|PTE_W|PTE_X)) == 0) {
+        uint64 child = PTE2PA(pte);
+        proc_freewalk((pagetable_t)child);
+      }
+    }
+  }
+  kfree((void*)pagetable);
+}
+```
+
+- 记得将自己写的函数添加到`defs.h`中
+
+```c++
+void            proc_kvmmap(pagetable_t, uint64, uint64, uint64, int);
+pagetable_t     proc_kernel_pt(void);
+void            proc_kvminithart(pagetable_t);
+void            proc_freewalk(pagetable_t);
+```
+
+
+
