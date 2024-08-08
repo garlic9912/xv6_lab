@@ -323,12 +323,10 @@ sfence_vma()
 #define PGSIZE 4096 // bytes per page
 #define PGSHIFT 12  // bits of offset within a page
 
-// 作用：将 sz 向上对齐到最近的页边界（页面大小通常为 4096 字节）
 #define PGROUNDUP(sz)  (((sz)+PGSIZE-1) & ~(PGSIZE-1))
-// 作用：将 a 向下对齐到最近的页边界
 #define PGROUNDDOWN(a) (((a)) & ~(PGSIZE-1))
 
-#define PTE_V (1L << 0) // valid
+#define PTE_V (1L << 0) // pte是否有效：pte里面的信息是否能用
 #define PTE_R (1L << 1)
 #define PTE_W (1L << 2)
 #define PTE_X (1L << 3)

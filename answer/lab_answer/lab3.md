@@ -411,3 +411,186 @@ void            proc_freewalk(pagetable_t);
 
 
 
+
+
+
+
+
+
+
+
+
+
+# 3.Simplify copyin/copyinstr（难度：hard）
+
+- **题目要求**
+
+内核的`copyin`函数读取用户指针指向的内存。它通过将用户指针转换为内核可以直接解引用的物理地址来实现这一点。这个转换是通过在软件中遍历进程页表来执行的。在本部分的实验中，您的工作是将（上一节中创建），以允许`copyin`（和相关的字符串函数`copyinstr`）直接解引用用户指针。
+
+> [!TIP|label:YOUR JOB] 将定义在***kernel/vm.c***中的`copyin`的主题内容替换为对`copyin_new`的调用（在***kernel/vmcopyin.c***中定义）；对`copyinstr`和`copyinstr_new`执行相同的操作。为每个进程的内核页表添加用户地址映射，以便`copyin_new`和`copyinstr_new`工作。如果`usertests`正确运行并且所有`make grade`测试都通过，那么你就完成了此项作业。
+
+此方案依赖于用户的虚拟地址范围不与内核用于自身指令和数据的虚拟地址范围重叠。Xv6使用从零开始的虚拟地址作为用户地址空间，幸运的是内核的内存从更高的地址开始。然而，这个方案将用户进程的最大大小限制为小于内核的最低虚拟地址。内核启动后，在XV6中该地址是`0xC000000`，即PLIC寄存器的地址；请参见***kernel/vm.c***中的`kvminit()`、***kernel/memlayout.h***和文中的图3-4。您需要修改xv6，以防止用户进程增长到超过PLIC的地址。
+
+
+
+
+
+- 解题步骤
+
+- 先用对`copyin_new`的调用替换`copyin()`，确保正常工作后再去修改`copyinstr`
+
+这一步就不多说了，直接换掉就行了
+
+```c++
+// kernel/vm.c
+int
+copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
+{
+  return copyin_new(pagetable, dst, srcva, len);
+}
+
+
+int
+copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
+{
+  return copyinstr_new(pagetable, dst, srcva, max);
+}
+```
+
+记得把`copyin_new`和`copyinstr_new`添加到`defs.h`里面
+
+```c++
+// kernel/defs.h
+// vmcpoyin.c
+int             copyin_new(pagetable_t, char *, uint64, uint64);
+int             copyinstr_new(pagetable_t, char *, uint64, uint64);
+```
+
+
+
+
+
+- 在内核更改进程的用户映射的每一处，都以相同的方式更改进程的内核页表。包括`fork()`, `exec()`, 和`sbrk()`.
+- 不要忘记在`userinit`的内核页表中包含第一个进程的用户页表
+
+这里两个提示就是让我们在这四个函数里面做操作
+
+这四个函数会操作进程的用户空间，我们要做的就是将用户空间的改变复制进内核页表
+
+所以我们需要在`vm.c`写一个新的函数用于“”用户空间的映射添加到每个进程的内核页表“”
+
+```c++
+// kernel/vm.c
+void
+u2kvmcopy(pagetable_t pagetable, pagetable_t kernel_pt, uint64 start, uint64 end){
+  pte_t *pte_from, *pte_to;
+
+  for (uint64 i = PGROUNDUP(start); i < end; i += PGSIZE){
+    // 用户页表此pte是否存在且有效
+    if((pte_from = walk(pagetable, i, 0)) == 0)
+      panic("u2kvmcopy: src pte does not exist");
+    // 判断内核是否存在此映射，无则创建
+    if((pte_to = walk(kernel_pt, i, 1)) == 0)
+      panic("u2kvmcopy: pte walk failed");
+    
+    uint64 pa = PTE2PA(*pte_from);
+    uint flags = (PTE_FLAGS(*pte_from)) & (~PTE_U);
+    // 添加一个pte
+    *pte_to = PA2PTE(pa) | flags;
+  }
+}
+```
+
+我们遍历用户空间的`start`到`end`逻辑地址的所有映射，并为内核页表添加一个相同的映射
+
+这里需要注意`flags`应该将`PTE_U`的标志去除，否则内核无法读取这个`pte`
+
+
+
+
+
+- `userinit()`
+
+```c++
+void
+userinit(void)
+{
+  // ...
+
+  // 将进程的页表拷贝给进程的内核页表
+  u2kvmcopy(p->pagetable, p->kernel_pt, 0, p->sz);
+
+  // prepare for the very first "return" from kernel to user.
+  // ...
+}
+```
+
+
+
+- `fork()`
+
+```c++
+int
+fork(void)
+{
+  // ...
+
+  np->sz = p->sz;
+
+  // 复制给进程内核页表
+  u2kvmcopy(np->pagetable, np->kernel_pt, 0, np->sz);
+
+  np->parent = p;
+  // ...
+}
+```
+
+
+
+- `exec()`
+
+```c++
+int
+exec(char *path, char **argv)
+{
+  // ...  
+  // 拷贝给进程的内核页表
+  u2kvmcopy(pagetable, p->kernel_pt, 0, sz);
+
+  // Push argument strings, prepare rest of stack in ustack.
+  // ...
+}
+```
+
+
+
+
+
+- `sbrk()`对应的`growproc()`
+
+```c++
+int
+growproc(int n)
+{
+  uint sz;
+  struct proc *p = myproc();
+
+  sz = p->sz;
+  if(n > 0){
+    // 不能超过PLIC的地址
+    if (PGROUNDUP(sz + n) >= PLIC)
+      return -1;
+    if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
+      return -1;
+    }
+    // 复制一份到内核页表
+    u2kvmcopy(p->pagetable, p->kernel_pt, sz - n, sz);
+  } else if(n < 0){
+    sz = uvmdealloc(p->pagetable, sz, sz + n);
+  }
+  p->sz = sz;
+  return 0;
+}
+```
+
+这里要注意要求的不能超过`PLIC`地址

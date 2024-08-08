@@ -75,6 +75,9 @@ exec(char *path, char **argv)
   sp = sz;
   stackbase = sp - PGSIZE;
 
+  // 将进程的页表拷贝给进程的内核页表
+  u2kvmcopy(pagetable, p->kernel_pt, 0, sz);
+
   // Push argument strings, prepare rest of stack in ustack.
   for(argc = 0; argv[argc]; argc++) {
     if(argc >= MAXARG)
@@ -108,6 +111,7 @@ exec(char *path, char **argv)
       last = s+1;
   safestrcpy(p->name, last, sizeof(p->name));
     
+
   // Commit to the user image.
   oldpagetable = p->pagetable;
   p->pagetable = pagetable;
@@ -116,6 +120,13 @@ exec(char *path, char **argv)
   p->trapframe->sp = sp; // initial stack pointer
   proc_freepagetable(oldpagetable, oldsz);
 
+
+
+
+  if(p->pid==1) {
+    vmprint(p->pagetable);
+  }
+  
   return argc; // this ends up in a0, the first argument to main(argc, argv)
 
  bad:
