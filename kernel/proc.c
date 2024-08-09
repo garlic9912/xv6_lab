@@ -30,16 +30,6 @@ procinit(void)
   initlock(&pid_lock, "nextpid");
   for(p = proc; p < &proc[NPROC]; p++) {
       initlock(&p->lock, "proc");
-
-      // Allocate a page for the process's kernel stack.
-      // Map it high in memory, followed by an invalid
-      // guard page.
-      char *pa = kalloc();
-      if(pa == 0)
-        panic("kalloc");
-      uint64 va = KSTACK((int) (p - proc));
-      kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
-      p->kstack = va;
   }
   kvminithart();
 }
@@ -121,6 +111,25 @@ found:
     return 0;
   }
 
+  // 初始化内核页表
+  p->kernel_pt = proc_kernel_pt();
+  if(p->kernel_pt == 0){
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }  
+
+
+  // 内核栈映射
+  char *pa = kalloc();
+  if(pa == 0)
+    panic("kalloc");
+  // 每个进程在虚拟内存空间中都有一个独立的内核栈区域，KSTACK 根据进程索引计算出这个区域的起始地址
+  uint64 va = KSTACK((int) (p - proc));
+  proc_kvmmap(p->kernel_pt, va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
+  p->kstack = va;
+
+
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
@@ -150,6 +159,11 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+  // 释放进程的内核栈
+  uvmunmap(p->kernel_pt, p->kstack, 1, 1);
+  p->kstack = 0;
+  // 释放进程的内核页表
+  proc_freewalk(p->kernel_pt);
 }
 
 // Create a user page table for a given process,
@@ -159,22 +173,19 @@ proc_pagetable(struct proc *p)
 {
   pagetable_t pagetable;
 
-  // An empty page table.
+  // 创建一个新的页表
   pagetable = uvmcreate();
   if(pagetable == 0)
     return 0;
 
-  // map the trampoline code (for system call return)
-  // at the highest user virtual address.
-  // only the supervisor uses it, on the way
-  // to/from user space, so not PTE_U.
+  // 映射代码到指定的虚拟空间
   if(mappages(pagetable, TRAMPOLINE, PGSIZE,
               (uint64)trampoline, PTE_R | PTE_X) < 0){
+    // 失败释放页表
     uvmfree(pagetable, 0);
     return 0;
   }
 
-  // map the trapframe just below TRAMPOLINE, for trampoline.S.
   if(mappages(pagetable, TRAPFRAME, PGSIZE,
               (uint64)(p->trapframe), PTE_R | PTE_W) < 0){
     uvmunmap(pagetable, TRAMPOLINE, 1, 0);
@@ -221,6 +232,9 @@ userinit(void)
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
 
+  // 将进程的页表拷贝给进程的内核页表
+  u2kvmcopy(p->pagetable, p->kernel_pt, 0, p->sz);
+
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
   p->trapframe->sp = PGSIZE;  // user stack pointer
@@ -243,9 +257,14 @@ growproc(int n)
 
   sz = p->sz;
   if(n > 0){
+    // 不能超过PLIC的地址
+    if (PGROUNDUP(sz + n) >= PLIC)
+      return -1;
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
+    // 复制一份到内核页表
+    u2kvmcopy(p->pagetable, p->kernel_pt, sz - n, sz);
   } else if(n < 0){
     sz = uvmdealloc(p->pagetable, sz, sz + n);
   }
@@ -273,7 +292,11 @@ fork(void)
     release(&np->lock);
     return -1;
   }
+
   np->sz = p->sz;
+
+  // 复制给进程内核页表
+  u2kvmcopy(np->pagetable, np->kernel_pt, 0, np->sz);
 
   np->parent = p;
 
@@ -288,6 +311,7 @@ fork(void)
     if(p->ofile[i])
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
+
 
   safestrcpy(np->name, p->name, sizeof(p->name));
 
@@ -446,13 +470,10 @@ wait(uint64 addr)
   }
 }
 
-// Per-CPU process scheduler.
-// Each CPU calls scheduler() after setting itself up.
-// Scheduler never returns.  It loops, doing:
-//  - choose a process to run.
-//  - swtch to start running that process.
-//  - eventually that process transfers control
-//    via swtch back to the scheduler.
+
+
+// 这个函数实现了一个简单的调度器
+// 循环检查所有进程并选择可运行的进程（RUNNABLE 状态）进行执行
 void
 scheduler(void)
 {
@@ -460,8 +481,9 @@ scheduler(void)
   struct cpu *c = mycpu();
   
   c->proc = 0;
+  // 无限循环，即调度器会不断地运行
   for(;;){
-    // Avoid deadlock by ensuring that devices can interrupt.
+    // 确保中断是开启的，以避免死锁
     intr_on();
     
     int found = 0;
@@ -473,17 +495,22 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+        // 加载进程内核页表到satp寄存器
+        proc_kvminithart(p->kernel_pt);
+        // 执行上下文切换，将 CPU 的控制权交给进程
         swtch(&c->context, &p->context);
 
-        // Process is done running for now.
-        // It should have changed its p->state before coming back.
+        // 进程运行完后，将当前 CPU 的 proc 置为 0，表示当前没有进程在运行
         c->proc = 0;
+        // 切换回内核态页表
+        kvminithart();
 
         found = 1;
       }
       release(&p->lock);
     }
 #if !defined (LAB_FS)
+    // 如果没有找到可运行的进程，执行空闲任务
     if(found == 0) {
       intr_on();
       asm volatile("wfi");
