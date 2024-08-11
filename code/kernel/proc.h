@@ -98,10 +98,16 @@ struct proc {
   uint64 kstack;               // Virtual address of kernel stack
   uint64 sz;                   // Size of process memory (bytes)
   pagetable_t pagetable;       // User page table
-  pagetable_t kernel_pt;       // 进程的内核页表
   struct trapframe *trapframe; // data page for trampoline.S
   struct context context;      // swtch() here to run process
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+  
+  // Alarm
+  int flag;  // 是否处于alarm状态
+  int nticks;  // alarm要求的时间间隔
+  uint time;  //　程序运行的时间
+  uint64 addr;  // alarm要求调用的函数
+  struct trapframe alarmframe;  // 保存alarm前的现场
 };

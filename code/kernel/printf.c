@@ -132,3 +132,18 @@ printfinit(void)
   initlock(&pr.lock, "pr");
   pr.locking = 1;
 }
+
+
+
+void
+backtrace(void) {
+  printf("backtrace:\n");
+  // 读取当前栈指针
+  uint64 fp = r_fp();
+  uint64 sp = PGROUNDDOWN(fp);
+  while (PGROUNDDOWN(fp) == sp) {
+    printf("%p\n", *(uint64*)(fp - 8));
+    // Prev.Frame(fp)
+    fp = *(uint64*)(fp - 16);
+  }
+}
