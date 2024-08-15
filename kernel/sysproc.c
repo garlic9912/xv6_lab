@@ -43,12 +43,17 @@ sys_sbrk(void)
 {
   int addr;
   int n;
-
+  struct proc *p = myproc();
+  addr = p->sz;
   if(argint(0, &n) < 0)
     return -1;
-  addr = myproc()->sz;
-  if(growproc(n) < 0)
-    return -1;
+  if (n >= 0) {
+    // 增加大小但不分配内存页
+    p->sz += n;
+  } else if (p->sz + n > 0) {
+    // 减少大小需要减少内存页
+    p->sz = uvmdealloc(p->pagetable, p->sz, p->sz + n);
+  }
   return addr;
 }
 
