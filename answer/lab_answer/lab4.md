@@ -210,22 +210,33 @@ struct proc {
 
 这个系统调用的需要两个参数，一个是滴答数，一个是函数地址。在程序运行对应的滴答就会去对应的函数地址执行
 
-比较难想的就是为什么到了指定的滴答数就会执行另外一个函数，这里要看`/kernel/trap.c`文件中的`usertrap()`函数，里面有一个时钟中断，每隔一个`tick`就会中断一次。我们可以借助这个去进行计数，每次陷入内核处理时钟中断时判断程序运行了多少`tick`，从而采取相应的手段
-
-所以这个系统调用只用给进程的新变量初始化即可，其余写在`usertrap()`中
+比较难想的就是**为什么到了指定的滴答数就会执行另外一个函数**，这里要看`/kernel/trap.c`文件中的`usertrap()`函数，里面有一个**时钟中断，每隔一个`tick`就会中断一次**。我们可以借助这个去进行计数，每次陷入内核处理时钟中断时判断程序运行了多少`tick`，从而采取相应的手段
 
 ```c++
-// kernel/sysproc.c
 uint64
 sys_sigalarm(void){
   // 传递alarm参数给进程，方便之后的中断
-  if (argint(0, &myproc()->nticks) < 0)
+  int nticks;
+  uint64 addr;
+  struct proc *p = myproc();
+
+  p->flag = 1;
+
+  if (argint(0, &nticks) < 0)
     return -1;
-  if (argaddr(1, &myproc()->addr) < 0)
+  if (argaddr(1, &addr) < 0)
     return -1;
+  if (nticks == 0) 
+    p->flag = 0;
+  else {
+    p->nticks = nticks;
+    p->addr = addr;
+  }
   return 0;
 }
 ```
+
+我们之前添加在`struct proc`里面的`flag`很重要，他决定了我们这个进程的`sigalarm`系统调用是否有效；有效调用这个系统调用时，我们将`flag`设置为1，方便时钟中断代码的改写。如果参数为0,0表明关闭这个系统调用，我们将`flag`设置为0。
 
 ```c++
 // kernel/trap.c
@@ -236,15 +247,17 @@ void usertrap(void)
     exit(-1);
 
   // 中断源是计时器中断
-  if (which_dev == 2 && p->nticks != 0 && p->flag == 0)
+  if (which_dev == 2)
   {
-    p->time++;
-    // 判断是否开启了alarm
-    if (p->time == p->nticks)
+    // sigalarm生效中
+    if (p->flag == 1)
     {
-      memmove(&p->alarmframe, p->trapframe, sizeof(struct trapframe));
-      p->trapframe->epc = p->addr;
-      p->flag = 1;
+      p->time += 1;
+      if (p->time == p->nticks)
+      {
+        memmove(&p->alarmframe, p->trapframe, sizeof(struct trapframe));
+        p->trapframe->epc = p->addr;
+      }
     }
     yield();
   }
@@ -253,16 +266,17 @@ void usertrap(void)
 }
 ```
 
+
+
 - 编写`sigreturn`系统调用
 
-恢复现场，变量置零
+恢复现场，只需将`time`参数置零即可，方便之后的计数
 
 ```c++
 uint64
 sys_sigreturn(void) {
   struct proc *p = myproc();
   memmove(p->trapframe, &p->alarmframe, sizeof(struct trapframe));
-  p->flag = 0;
   p->time = 0;
   return 0;
 }

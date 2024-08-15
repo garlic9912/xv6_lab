@@ -5,7 +5,6 @@
 #include "param.h"
 #include "memlayout.h"
 #include "spinlock.h"
-#include "sysinfo.h"
 #include "proc.h"
 
 uint64
@@ -58,7 +57,7 @@ sys_sleep(void)
 {
   int n;
   uint ticks0;
-
+  backtrace();
   if(argint(0, &n) < 0)
     return -1;
   acquire(&tickslock);
@@ -99,40 +98,34 @@ sys_uptime(void)
 
 
 
-// 跟踪系统调用，返回pid和函数返回值
-// $ trace 32 grep hello README
-// 3: syscall read -> 1023
 uint64
-sys_trace(void)
-{
-  int n;
-  // 获取系统调用的参数
-  if(argint(0, &n) < 0)
+sys_sigalarm(void){
+  // 传递alarm参数给进程，方便之后的中断
+  int nticks;
+  uint64 addr;
+  struct proc *p = myproc();
+
+  p->flag = 1;
+
+  if (argint(0, &nticks) < 0)
     return -1;
-  myproc()->mask = n;
+  if (argaddr(1, &addr) < 0)
+    return -1;
+  if (nticks == 0) 
+    p->flag = 0;
+  else {
+    p->nticks = nticks;
+    p->addr = addr;
+  }
   return 0;
 }
 
 
 
 uint64
-sys_sysinfo(void) {
+sys_sigreturn(void) {
   struct proc *p = myproc();
-  struct sysinfo info;
-  uint64 addr;
-  
-  // 获取数据
-  info.freemem = get_freemem();
-  info.nproc = get_proc();
-
-  // 系统调用第n=0个参数的用户空间地址
-  if (argaddr(0, &addr) < 0) return -1;
-
-  // p->pagetable：当前进程的页表
-  // addr：用户空间目的地址
-  // (char *)&info：内核空间的源地址
-  // sizeof(info)：复制的长度
-  if (copyout(p->pagetable, addr, (char *)&info, sizeof(info)) < 0)
-    return -1;
+  memmove(p->trapframe, &p->alarmframe, sizeof(struct trapframe));
+  p->time = 0;
   return 0;
 }

@@ -89,15 +89,17 @@ void usertrap(void)
     exit(-1);
 
   // 中断源是计时器中断
-  if (which_dev == 2 && p->nticks != 0 && p->flag == 0)
+  if (which_dev == 2)
   {
-    p->time++;
-    // 判断是否开启了alarm
-    if (p->time == p->nticks)
+    if (p->flag == 1)
     {
-      memmove(&p->alarmframe, p->trapframe, sizeof(struct trapframe));
-      p->trapframe->epc = p->addr;
-      p->flag = 1;
+      p->time += 1;
+      // 判断是否开启了alarm
+      if (p->time == p->nticks)
+      {
+        memmove(&p->alarmframe, p->trapframe, sizeof(struct trapframe));
+        p->trapframe->epc = p->addr;
+      }
     }
     yield();
   }
