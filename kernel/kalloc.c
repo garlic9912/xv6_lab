@@ -52,17 +52,14 @@ freerange(void *pa_start, void *pa_end)
 // call to kalloc().  (The exception is when
 // initializing the allocator; see kinit above.)
 
-// 获取cpu的id号
-int getCpuId() {
-  return cpuid();
-}
-
 
 void
 kfree(void *pa)
 {
   struct run *r;
-  int cpu_id = getCpuId();
+  push_off();
+  int cpu_id = cpuid();
+  pop_off();
 
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
@@ -110,7 +107,9 @@ void *
 kalloc(void)
 {
   struct run *r;
-  int cpu_id = getCpuId();
+  push_off();
+  int cpu_id = cpuid();
+  pop_off();
 
   acquire(&kmem[cpu_id].lock);
   r = kmem[cpu_id].freelist;
