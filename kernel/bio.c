@@ -33,6 +33,11 @@ struct {
   struct buf head;
 } bcache;
 
+
+/*
+  1.头插法初始化bcache
+  2.每一个块初始化睡眠锁
+*/
 void
 binit(void)
 {
