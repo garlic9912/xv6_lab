@@ -39,17 +39,6 @@ kinit()
 
 
 
-获取当前cpu的id号
-
-```c++
-// 获取cpu的id号
-int getCpuId() {
-  return cpuid();
-}
-```
-
-
-
 
 
 对`kalloc`和`kfree`函数改造，每个`cpu`使用自己的`freelist`
@@ -61,7 +50,9 @@ void *
 kalloc(void)
 {
   struct run *r;
-  int cpu_id = getCpuId();
+  push_off();
+  int cpu_id = cpuid();
+  pop_off();
 
   acquire(&kmem[cpu_id].lock);
   r = kmem[cpu_id].freelist;
@@ -86,7 +77,9 @@ void
 kfree(void *pa)
 {
   struct run *r;
-  int cpu_id = getCpuId();
+  push_off();
+  int cpu_id = cpuid();
+  pop_off();
 
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
